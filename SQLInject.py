@@ -206,9 +206,14 @@ def main():
             unsafe_user = st.text_input("Username", key="unsafe_user")
             unsafe_pass = st.text_input("Password", type="password", key="unsafe_pass")
             
-            st.subheader("Try the Attack!")
-            st.write("Now, enter this into the **Username** field and *any* password:")
+            st.subheader("Attack 1: Bypassing Login")
+            st.write("Enter this into the **Username** field and *any* password to log in as *all users*.")
             st.code("' OR '1'='1' --")
+
+            st.subheader("Attack 2: Changing Data")
+            st.write("This attack uses a semicolon (`;`) to *stack* a new command. It tricks the database into running an `UPDATE` command to make a 'guest' user an 'admin'.")
+            st.write("Enter this into the **Username** field (password can be anything):")
+            st.code("eve'; UPDATE users SET role='admin' WHERE username='eve' --")
             
             unsafe_submitted = st.form_submit_button("Attempt Unsafe Login")
 
@@ -220,10 +225,16 @@ def main():
             st.code(result['query'], language="sql")
             
             if result['data']:
-                st.write("**Data Returned:**")
+                st.write("**Data Returned (from the `SELECT` part):**")
                 # Format data nicely
                 df = pd.DataFrame(result['data'], columns=["id", "username", "password", "email", "role"])
                 st.dataframe(df, use_container_width=True)
+            
+            # Check if the destructive attack was performed
+            if "UPDATE" in unsafe_user.upper():
+                st.error("ATTACK SUCCESSFUL! The `UPDATE` command was injected and executed.")
+                st.info("Scroll up to the 'Current Database Contents' table. You will see that user 'eve' is now an 'admin'!")
+                st.warning("This change is permanent in the database until you click 'Create / Reset Database' again.")
 
     with col2:
         st.header("3. The Prevention (SAFE)")
@@ -234,9 +245,9 @@ def main():
             safe_user = st.text_input("Username", key="safe_user")
             safe_pass = st.text_input("Password", type="password", key="safe_pass")
             
-            st.subheader("Try the Attack Again!")
-            st.write("Enter the same attack string (`' OR '1'='1' --`) into the **Username** field.")
-            st.write("Watch how it fails safely!")
+            st.subheader("Try the Attacks Again!")
+            st.write("Enter the *same attack strings* from the 'Unsafe' side (both the `' OR '1'='1' --` and the `UPDATE` one).")
+            st.write("Watch how they both fail safely!")
 
             safe_submitted = st.form_submit_button("Attempt Safe Login")
 
@@ -252,7 +263,9 @@ def main():
                 df = pd.DataFrame(result['data'], columns=["id", "username", "password", "email", "role"])
                 st.dataframe(df, use_container_width=True)
             else:
-                st.write("No data was returned, as the database correctly searched for a user named `' OR '1'='1' --` and found no match.")
+                st.write("No data was returned. The database correctly and safely searched for a user with the literal (and non-existent) name you entered.")
+                if "UPDATE" in safe_user.upper():
+                    st.success("The `UPDATE` attack was **PREVENTED**. The database was not changed.")
     
     st.markdown("---")
 
@@ -270,3 +283,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
