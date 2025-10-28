@@ -1,13 +1,12 @@
+import streamlit as st
 import sqlite3
 import os
 import re
-from flask import Flask, request, render_template_string, redirect, url_for
 
 # --- 1. Configuration ---
-app = Flask(__name__)
 DB_NAME = 'users.db'
 
-# --- 2. SQLi Detection Logic (from detect_attack.py) ---
+# --- 2. SQLi Detection Logic ---
 SQLI_PATTERNS = [
     r"'.*OR.*'1'.*='1'",  # Matches ' OR '1'='1'
     r"'.*--",             # Matches comments to truncate query
@@ -18,17 +17,16 @@ COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in SQLI_PATTERNS]
 
 def detect_sql_injection(input_string):
     """
-    Scans an input string for SQLi patterns and returns a detection message.
+    Scans an input string for SQLi patterns and returns a tuple (is_detected, message).
     """
     for pattern in COMPILED_PATTERNS:
         if pattern.search(input_string):
-            return f"🚨 DETECTION: Malicious pattern '{pattern.pattern}' found in input!"
-    return "✅ DETECTION: Input seems clean."
+            return (True, f"🚨 DETECTION: Malicious pattern '{pattern.pattern}' found!")
+    return (False, "✅ DETECTION: Input seems clean.")
 
-# --- 3. Database Creation Logic (from create_db.py) ---
-@app.route('/init_db')
+# --- 3. Database Creation Logic ---
 def init_db():
-    """A web route to initialize the database."""
+    """A function to initialize the database."""
     if os.path.exists(DB_NAME):
         os.remove(DB_NAME)
     
@@ -53,15 +51,14 @@ def init_db():
     cursor.executemany("INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)", sample_users)
     conn.commit()
     conn.close()
-    
-    # Redirect back to the main page
-    return redirect(url_for('homepage'))
+    st.success(f"Database '{DB_NAME}' created and populated!")
+    st.balloons()
 
 # --- 4. Login Logic (Vulnerable & Secure) ---
 
 def vulnerable_login(username, password):
     """
-    VULNERABLE login function. Returns a result string.
+    VULNERABLE login function. Returns a tuple (success, message, query).
     """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -75,16 +72,16 @@ def vulnerable_login(username, password):
         conn.close()
         
         if user:
-            return f"--- VULNERABLE SUCCESS (Attack) ---\nLogged in as: {user[1]} (Role: {user[4]})\nQuery was: {query}"
+            return (True, f"Logged in as: {user[1]} (Role: {user[4]})", query)
         else:
-            return f"--- VULNERABLE FAILURE ---\nInvalid username or password.\nQuery was: {query}"
+            return (False, "Invalid username or password.", query)
             
     except Exception as e:
-        return f"--- VULNERABLE ERROR ---\n{e}\nQuery was: {query}"
+        return (False, f"An error occurred: {e}", query)
 
 def secure_login(username, password):
     """
-    SECURE login function. Returns a result string.
+    SECURE login function. Returns a tuple (success, message, query).
     """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -98,115 +95,95 @@ def secure_login(username, password):
         conn.close()
         
         if user:
-            return f"--- SECURE SUCCESS (Legitimate) ---\nLogged in as: {user[1]} (Role: {user[4]})\nQuery was: {query}"
+            return (True, f"Logged in as: {user[1]} (Role: {user[4]})", query)
         else:
-            return f"--- SECURE FAILURE ---\nInvalid username or password.\nQuery was: {query}"
+            return (False, "Invalid username or password.", query)
             
     except Exception as e:
-        return f"--- SECURE ERROR ---\n{e}\nQuery was: {query}"
+        return (False, f"An error occurred: {e}", query)
 
-# --- 5. Web Page (HTML Template) ---
-# We define the HTML right in the Python file for simplicity.
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>SQLi Demo</title>
-    <style>
-        body { font-family: sans-serif; margin: 2em; }
-        .container { display: flex; gap: 2em; }
-        .box { border: 1px solid #ccc; padding: 1em; border-radius: 5px; }
-        pre { background-color: #f4f4f4; padding: 1em; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }
-        input[type=text], input[type=password] { width: 100%; box-sizing: border-box; }
-        h2 { border-bottom: 2px solid; }
-        .danger { color: red; }
-        .safe { color: green; }
-    </style>
-</head>
-<body>
-    <h1>SQL Injection Demo</h1>
-    <p>
-        <a href="/init_db">Click here to initialize/reset the database.</a>
-        (Users: admin, alice, bob)
-    </p>
+# --- 5. Streamlit Page Layout ---
 
-    <div class="container">
-        <div class="box">
-            <h2 class="danger">Vulnerable Login (Uses f-strings)</h2>
-            <form method="POST">
-                <input type="hidden" name="form_type" value="vulnerable">
-                <label>Username:</label>
-                <input type="text" name="username">
-                <label>Password:</label>
-                <input type="password" name="password">
-                <br><br>
-                <button type="submit">Login</button>
-            </form>
-        </div>
+st.set_page_config(layout="wide")
+st.title("🛡️ SQL Injection Demonstration")
 
-        <div class="box">
-            <h2 class="safe">Secure Login (Uses Parameters)</h2>
-            <form method="POST">
-                <input type="hidden" name="form_type" value="secure">
-                <label>Username:</label>
-                <input type="text" name="username">
-                <label>Password:</label>
-                <input type="password" name="password">
-                <br><br>
-                <button type="submit">Login</button>
-            </form>
-        </div>
-    </div>
-
-    {% if result %}
-    <h2>Results</h2>
-    <pre>{{ detection_result }}</pre>
-    <pre>{{ result }}</pre>
-    {% endif %}
-
-    <h3>Try these inputs in the Username field (and any password):</h3>
-    <pre>' OR '1'='1'</pre>
-    <pre>admin' --</pre>
-
-</body>
-</html>
-"""
-
-# --- 6. Main Web Route ---
-@app.route('/', methods=['GET', 'POST'])
-def homepage():
-    """
-    Main page, handles both showing the forms (GET) 
-    and processing the login (POST).
-    """
-    result = ""
-    detection_result = ""
-    
-    if request.method == 'POST':
-        # Get data from the form that was submitted
-        username = request.form['username']
-        password = request.form['password']
-        form_type = request.form['form_type']
-        
-        # 1. Run the detector on the username input
-        detection_result = detect_sql_injection(username)
-        
-        # 2. Run the correct login function
-        if form_type == 'vulnerable':
-            result = vulnerable_login(username, password)
-        elif form_type == 'secure':
-            result = secure_login(username, password)
-
-    # Show the webpage
-    return render_template_string(HTML_TEMPLATE, result=result, detection_result=detection_result)
-
-# --- 7. Run the App ---
-if __name__ == '__main__':
-    if not os.path.exists(DB_NAME):
-        print("Database not found. Initializing...")
+# Sidebar for DB management
+with st.sidebar:
+    st.header("Database Control")
+    st.write("First, create the database. You can reset it anytime.")
+    if st.button("Initialize/Reset Database"):
         init_db()
+
+# Check if DB exists
+if not os.path.exists(DB_NAME):
+    st.warning("Database 'users.db' not found. Please click the 'Initialize/Reset Database' button in the sidebar to begin.")
+    st.stop()
+
+st.info("""
+Try these inputs in the **Username** field (password can be anything):
+* `' OR '1'='1`
+* `admin' --`
+""")
+
+# Create two columns for the forms
+col1, col2 = st.columns(2)
+
+# --- VULNERABLE FORM ---
+with col1:
+    st.error("### 1. Vulnerable Login (Insecure)")
     
-    print("Starting Flask server...")
-    print("Open your browser and go to: http://127.0.0.1:5000")
-    app.run(debug=True) # debug=True auto-reloads when you save the file
+    with st.form(key="vulnerable_form"):
+        username = st.text_input("Username", key="vuln_user")
+        password = st.text_input("Password", type="password", key="vuln_pass")
+        submit_button = st.form_submit_button(label="Login")
+
+        if submit_button:
+            st.subheader("Results:")
+            
+            # 1. Run Detection
+            is_detected, detection_msg = detect_sql_injection(username)
+            if is_detected:
+                st.warning(detection_msg)
+            else:
+                st.success(detection_msg)
+            
+            # 2. Run Login
+            success, message, query = vulnerable_login(username, password)
+            
+            with st.expander("Show Login Attempt Details"):
+                if success:
+                    st.error(f"**Login Succeeded (Attack Worked!)**\n\n{message}")
+                else:
+                    st.info(f"**Login Failed**\n\n{message}")
+                
+                st.code(f"Executed Query:\n{query}", language="sql")
+
+# --- SECURE FORM ---
+with col2:
+    st.success("### 2. Secure Login (Safe)")
+    
+    with st.form(key="secure_form"):
+        username = st.text_input("Username", key="sec_user")
+        password = st.text_input("Password", type="password", key="sec_pass")
+        submit_button = st.form_submit_button(label="Login")
+
+        if submit_button:
+            st.subheader("Results:")
+            
+            # 1. Run Detection
+            is_detected, detection_msg = detect_sql_injection(username)
+            if is_detected:
+                st.warning(detection_msg)
+            else:
+                st.success(detection_msg)
+
+            # 2. Run Login
+            success, message, query = secure_login(username, password)
+            
+            with st.expander("Show Login Attempt Details"):
+                if success:
+                    st.success(f"**Login Succeeded (Legitimate)**\n\n{message}")
+                else:
+                    st.error(f"**Login Failed (Attack Prevented!)**\n\n{message}")
+                
+                st.code(f"Executed Query:\n{query}\n\nParameters Passed:\n('{username}', '{password}')", language="sql")
