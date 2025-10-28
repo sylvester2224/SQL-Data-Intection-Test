@@ -63,10 +63,10 @@ def detect_sql_injection(input_string):
     print("    ✅ DETECTION: Input seems clean.\n")
     return False
 
-# --- 4. Vulnerable Login Function ---
+# --- 4. Vulnerable Login Function (CORRECTED) ---
 def vulnerable_login(username, password):
     """
-    VULNERABLE login function using f-strings.
+    VULNERABLE login function using f-strings and executescript.
     """
     print("  [Vulnerable Login Function]")
     conn = sqlite3.connect(DB_NAME)
@@ -77,20 +77,23 @@ def vulnerable_login(username, password):
     print(f"    Executing query: {query}")
     
     try:
-        cursor.execute(query)
-        user = cursor.fetchone()
+        # **THE VULNERABILITY**: Using executescript()
+        # This allows multiple statements, including the 'DROP TABLE' one.
+        cursor.executescript(query)
+        conn.commit()
         
-        if user:
-            print(f"    ❌ VULNERABLE_RESULT: SUCCESS! Logged in as: {user[1]} (Role: {user[4]})\n")
-        else:
-            print("    ✅ VULNERABLE_RESULT: FAILURE. Invalid credentials.\n")
+        # NOTE: We can't reliably fetch a user after executescript,
+        # but the query *running without error* is the security failure.
+        print(f"    ❌ VULNERABLE_RESULT: SUCCESS! The malicious script executed.\n")
             
     except Exception as e:
-        print(f"    ⚠️ VULNERABLE_RESULT: ERROR. Query failed: {e}\n")
+        # The 'OR 1=1' query will actually fail here because executescript
+        # doesn't like an incomplete SELECT. But the DROP TABLE will work.
+        print(f"    ⚠️ VULNERABLE_RESULT: Query failed or executed. Error: {e}\n")
     finally:
         conn.close()
 
-# --- 5. Secure Login Function ---
+# --- 5. Secure Login Function (UNCHANGED) ---
 def secure_login(username, password):
     """
     SECURE login function using parameterized queries.
@@ -105,6 +108,8 @@ def secure_login(username, password):
     print(f"    With parameters: ('{username}', '{password}')")
     
     try:
+        # **THE FIX**: Using execute() with parameters.
+        # This *prevents* query stacking.
         cursor.execute(query, (username, password))
         user = cursor.fetchone()
         
@@ -121,9 +126,6 @@ def secure_login(username, password):
 # --- 6. Main execution block to run the demo ---
 if __name__ == "__main__":
     
-    # Initialize the database
-    init_db()
-    
     # Define our list of payloads to test
     attack_payloads = {
         "Login Bypass ('OR '1'='1')": "' OR '1'='1",
@@ -131,8 +133,11 @@ if __name__ == "__main__":
         "Destructive Query ('; DROP')": "'; DROP TABLE users --"
     }
     
-    # --- Run the demo for each attack ---
+    # Run the demo for each attack
     for description, payload in attack_payloads.items():
+        # Re-initialize the database for *every* test to make it clean
+        init_db()
+        
         print("===================================================================")
         print(f"--- 2. Running Test: {description} ---")
         print("===================================================================\n")
@@ -148,21 +153,24 @@ if __name__ == "__main__":
         # Step C: Attempt attack on SECURE function
         print("--- Step C: Attack Secure Function ---")
         secure_login(payload, "password_doesnt_matter")
+        
+        # Step D: Verify if the database was destroyed
+        print("--- Step D: Verifying Database State ---")
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users")
+            users = cursor.fetchall()
+            print(f"    ✅ Database check: 'users' table is INTACT. Found {len(users)} users.\n")
+        except Exception as e:
+            print(f"    ❌ Database check: 'users' table is GONE! Error: {e}\n")
+        finally:
+            conn.close()
 
     print("===================================================================")
-    print("--- 3. Verifying Database State ---")
-    print("===================================================================\n")
-    
-    # Check if the 'DROP TABLE' attack worked
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users")
-        users = cursor.fetchall()
-        print(f"✅ Database check: 'users' table is INTACT. Found {len(users)} users.")
-        print("The secure function prevented the 'DROP TABLE' attack from running.")
-    except Exception as e:
-        print(f"❌ Database check: 'users' table is GONE! Error: {e}")
-        print("This means the 'DROP TABLE' attack on the VULNERABLE function succeeded.")
-    finally:
-        conn.close()
+    print("--- Demo Complete ---")
+    print("===================================================================")
+    # Clean up the created database file
+    if os.path.exists(DB_NAME):
+        os.remove(DB_NAME)
+    print(f"Cleaned up {DB_NAME}.")
